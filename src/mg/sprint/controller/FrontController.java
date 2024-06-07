@@ -20,20 +20,28 @@ public class FrontController extends HttpServlet {
 
     @Override
     public void init() {
-        // Récupérer le package des contrôleurs à partir des paramètres d'initialisation
         String controllersPackage = this.getInitParameter("controllers_package");
         try {
             // Scanner les fichiers pour trouver les classes annotées @Controller
             List<Class<?>> controllers = Reflect.getAnnotatedClasses(controllersPackage, Controller.class);
+            // Verifie si le controller est vide ou non
+            if (controllers.isEmpty()) {
+                throw new IllegalStateException("Le package " + controllersPackage + " est vide ou n'existe pas.");
+            }
+
             for (Class<?> controller : controllers) {
                 for (Method method : controller.getDeclaredMethods()) {
                     if (method.isAnnotationPresent(GetMapping.class)) {
                         GetMapping getMapping = method.getAnnotation(GetMapping.class);
                         String url = getMapping.value();
-                        // Vérifier que l'URL n'est pas déjà mappée
+                        // Vérifier que l'URL n'est pas associee avec plusieurs controller
+
                         if (urlMappings.containsKey(url)) {
-                            throw new IllegalStateException("L'URL " + url + " est déjà mappée.");
+                            throw new IllegalStateException("L'URL " + url +
+                                    " est utiliser par plusieurs controller "
+                                    + urlMappings.get(url).getController().getName() + ".");
                         }
+
                         // Ajouter l'URL et la méthode à la liste des mappings
                         urlMappings.put(url, new Mapping(controller, method));
                     }
@@ -41,6 +49,7 @@ public class FrontController extends HttpServlet {
             }
         } catch (Exception e) {
             e.printStackTrace();
+            throw new RuntimeException(e.getMessage());
         }
     }
 
@@ -62,7 +71,7 @@ public class FrontController extends HttpServlet {
         Mapping mapping = urlMappings.get(url);
 
         if (mapping == null) {
-            // Si l'URL n'est pas mappée, renvoyer une erreur 404
+            // Si l'URL est inexistant
             resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
             out.println("<h1>Erreur 404</h1>");
             out.println("<p>L'URL " + url + " est introuvable sur ce serveur, veuillez essayer un autre.</p>");
@@ -77,7 +86,6 @@ public class FrontController extends HttpServlet {
 
                 if (result instanceof String) {
                     // Si le résultat est une chaîne de caractères, renvoyer le texte brut
-                    resp.setContentType("text/plain");
                     out.println((String) result);
                 } else if (result instanceof ModelView) {
                     // Si le résultat est un ModelView, traiter la vue associée
@@ -101,7 +109,6 @@ public class FrontController extends HttpServlet {
                     }
                 } else {
                     // Si le type de retour n'est pas reconnu, renvoyer une erreur
-                    resp.setContentType("text/plain");
                     out.println("Type de retour non reconnu.");
                 }
             } catch (InstantiationException | IllegalAccessException | InvocationTargetException
