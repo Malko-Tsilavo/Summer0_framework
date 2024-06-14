@@ -6,12 +6,15 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import mg.sprint.annotation.Controller;
 import mg.sprint.annotation.GetMapping;
+import mg.sprint.annotation.Param;
 import mg.sprint.reflection.Reflect;
 
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 
@@ -22,7 +25,7 @@ public class FrontController extends HttpServlet {
     public void init() {
         String controllersPackage = this.getInitParameter("controllers_package");
         try {
-            // Scanner les fichiers pour trouver les classes annotées @Controller
+            // Scanner les fichiers pour trouver les classes annotées avec @Controller
             List<Class<?>> controllers = Reflect.getAnnotatedClasses(controllersPackage, Controller.class);
             // Verifie si le controller est vide ou non
             if (controllers.isEmpty()) {
@@ -34,12 +37,11 @@ public class FrontController extends HttpServlet {
                     if (method.isAnnotationPresent(GetMapping.class)) {
                         GetMapping getMapping = method.getAnnotation(GetMapping.class);
                         String url = getMapping.value();
-                        // Vérifier que l'URL n'est pas associee avec plusieurs controller
 
+                        // Vérifier que l'URL n'est pas associee avec plusieurs controller
                         if (urlMappings.containsKey(url)) {
-                            throw new IllegalStateException("L'URL " + url +
-                                    " est utiliser par plusieurs controller "
-                                    + urlMappings.get(url).getController().getName() + ".");
+                            throw new IllegalStateException(
+                                    "L'URL " + url + " est utiliser par plusieurs controllers.");
                         }
 
                         // Ajouter l'URL et la méthode à la liste des mappings
@@ -68,22 +70,41 @@ public class FrontController extends HttpServlet {
         String requestURI = req.getRequestURI();
         String contextPath = req.getContextPath();
         String url = requestURI.substring(contextPath.length());
-        Mapping mapping = urlMappings.get(url);
+        String route = Reflect.getRoute(url); // Utilisation de getRoute pour obtenir la route
+        Mapping mapping = urlMappings.get(route);
 
         if (mapping == null) {
             // Si l'URL est inexistant
             resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
             out.println("<h1>Erreur 404</h1>");
-            out.println("<p>L'URL " + url + " est introuvable sur ce serveur, veuillez essayer un autre.</p>");
+            out.println("<p>L'URL " + route + " est introuvable sur ce serveur, veuillez essayer un autre.</p>");
         } else {
             try {
                 // Instancier le contrôleur
                 Object controllerInstance = mapping.getController().getDeclaredConstructor().newInstance();
 
-                // Appeler la méthode du contrôleur
+                // Préparer les paramètres de la méthode du contrôleur
                 Method method = mapping.getMethod();
-                Object result = method.invoke(controllerInstance);
+                List<Object> methodParams = new ArrayList<>();
+                for (Parameter parameter : method.getParameters()) {
+                    if (parameter.getType().equals(HttpServletRequest.class)) {
+                        methodParams.add(req);
+                    } else {
+                        Param paramAnnotation = parameter.getAnnotation(Param.class);
+                        if (paramAnnotation != null) {
+                            String paramName = paramAnnotation.value();
+                            String paramValue = req.getParameter(paramName);
+                            methodParams.add(paramValue);
+                        } else {
+                            methodParams.add(req.getParameter(parameter.getName()));
+                        }
+                    }
+                }
 
+                // Appeler la méthode du contrôleur avec les paramètres récupérés
+                Object result = method.invoke(controllerInstance, methodParams.toArray());
+
+                // Gérer le type de retour de la méthode du contrôleur
                 if (result instanceof String) {
                     // Si le résultat est une chaîne de caractères, renvoyer le texte brut
                     out.println((String) result);
