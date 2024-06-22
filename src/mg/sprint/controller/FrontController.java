@@ -1,19 +1,23 @@
 package mg.sprint.controller;
 
-import jakarta.servlet.ServletException; // Assurez-vous que cette importation est présente
+import jakarta.servlet.RequestDispatcher;
+import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import mg.sprint.annotation.Controller;
 import mg.sprint.annotation.GetMapping;
-import mg.sprint.annotation.Param;
+import mg.sprint.annotation.RequestObject;
+import mg.sprint.annotation.RequestSubParameter;
 import mg.sprint.reflection.Reflect;
+import mg.sprint.reflection.AnnotationProcessor;
 
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -22,8 +26,8 @@ public class FrontController extends HttpServlet {
     private final HashMap<String, Mapping> urlMappings = new HashMap<>();
 
     @Override
-    public void init() {
-        String controllersPackage = this.getInitParameter("controllers_package");
+    public void init() throws ServletException {
+        String controllersPackage = getInitParameter("controllers_package");
         try {
             // Scanner les fichiers pour trouver les classes annotées avec @Controller
             List<Class<?>> controllers = Reflect.getAnnotatedClasses(controllersPackage, Controller.class);
@@ -32,6 +36,8 @@ public class FrontController extends HttpServlet {
                 throw new IllegalStateException("Le package " + controllersPackage + " est vide ou n'existe pas.");
             }
 
+            // Pour chaque classe de contrôleur, récupérer les méthodes annotées avec
+            // @GetMapping
             for (Class<?> controller : controllers) {
                 for (Method method : controller.getDeclaredMethods()) {
                     if (method.isAnnotationPresent(GetMapping.class)) {
@@ -56,91 +62,107 @@ public class FrontController extends HttpServlet {
     }
 
     @Override
-    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        processRequest(req, resp);
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp)
+            throws IOException, ServletException {
+        try {
+            processRequest(req, resp);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
     }
 
     @Override
-    protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        processRequest(req, resp);
+    protected void doPost(HttpServletRequest req, HttpServletResponse resp)
+            throws IOException, ServletException {
+        try {
+            processRequest(req, resp);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
     }
 
-    protected void processRequest(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+    protected void processRequest(HttpServletRequest req, HttpServletResponse resp)
+            throws IOException, ServletException, Exception {
         PrintWriter out = resp.getWriter();
         String requestURI = req.getRequestURI();
         String contextPath = req.getContextPath();
         String url = requestURI.substring(contextPath.length());
-        String route = Reflect.getRoute(url); // Utilisation de getRoute pour obtenir la route
-        Mapping mapping = urlMappings.get(route);
+        Mapping mapping = urlMappings.get(url);
 
+        // Si le mapping pour l'URL n'existe pas, retourner une erreur 404
         if (mapping == null) {
             // Si l'URL est inexistant
             resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
             out.println("<h1>Erreur 404</h1>");
-            out.println("<p>L'URL " + route + " est introuvable sur ce serveur, veuillez essayer un autre.</p>");
-        } else {
-            try {
-                // Instancier le contrôleur
-                Object controllerInstance = mapping.getController().getDeclaredConstructor().newInstance();
+            out.println("<p>L'URL " + url + " est introuvable sur ce serveur, veuillez essayer un autre.</p>");
+        }
 
-                // Préparer les paramètres de la méthode du contrôleur
-                Method method = mapping.getMethod();
-                List<Object> methodParams = new ArrayList<>();
-                for (Parameter parameter : method.getParameters()) {
-                    if (parameter.getType().equals(HttpServletRequest.class)) {
-                        methodParams.add(req);
-                    } else {
-                        Param paramAnnotation = parameter.getAnnotation(Param.class);
-                        if (paramAnnotation != null) {
-                            String paramName = paramAnnotation.value();
+        try {
+            // Instancier le contrôleur
+            Object controllerInstance = mapping.getController().getDeclaredConstructor().newInstance();
+            // Préparer les paramètres de la méthode du contrôleur
+            Method method = mapping.getMethod();
+            List<Object> methodParams = new ArrayList<>();
+
+            // Gérer les paramètres de la méthode
+            for (Parameter parameter : method.getParameters()) {
+                if (parameter.getType().equals(HttpServletRequest.class)) {
+                    methodParams.add(req);
+                } else if (parameter.getType().equals(HttpServletResponse.class)) {
+                    methodParams.add(resp);
+                } else if (parameter.isAnnotationPresent(RequestObject.class)) {
+                    // Gérer les objets annotés avec @RequestObject
+                    Class<?> parameterType = parameter.getType();
+                    Object parameterObject = parameterType.getDeclaredConstructor().newInstance();
+
+                    // Pour chaque champ de l'objet, gérer les annotations @RequestSubParameter
+                    for (Field field : parameterType.getDeclaredFields()) {
+                        if (field.isAnnotationPresent(RequestSubParameter.class)) {
+                            String paramName = field.getAnnotation(RequestSubParameter.class).value();
                             String paramValue = req.getParameter(paramName);
-                            methodParams.add(paramValue);
-                        } else {
-                            methodParams.add(req.getParameter(parameter.getName()));
+                            if (paramValue != null) {
+                                field.setAccessible(true);
+                                Object convertedValue = AnnotationProcessor.convertValue(field.getType(), paramValue);
+                                field.set(parameterObject, convertedValue);
+                            }
                         }
                     }
-                }
 
-                // Appeler la méthode du contrôleur avec les paramètres récupérés
-                Object result = method.invoke(controllerInstance, methodParams.toArray());
-
-                // Gérer le type de retour de la méthode du contrôleur
-                if (result instanceof String) {
-                    // Si le résultat est une chaîne de caractères, renvoyer le texte brut
-                    out.println((String) result);
-                } else if (result instanceof ModelView) {
-                    // Si le résultat est un ModelView, traiter la vue associée
-                    ModelView mv = (ModelView) result;
-                    String viewUrl = mv.getUrl();
-                    HashMap<String, Object> data = mv.getData();
-                    // Transférer les données vers la vue
-                    for (String key : data.keySet()) {
-                        req.setAttribute(key, data.get(key));
-                    }
-                    try {
-                        // Faire une redirection vers la vue associée
-                        req.getRequestDispatcher(viewUrl).forward(req, resp);
-                    } catch (ServletException e) {
-                        // En cas d'erreur lors de la redirection, renvoyer une erreur 500
-                        resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-                        out.println("<h1>500 Internal Server Error</h1>");
-                        out.println(
-                                "<p>Une erreur s'est produite lors de l'appel à la vue : " + e.getMessage() + "</p>");
-                        e.printStackTrace(out);
-                    }
+                    methodParams.add(parameterObject);
                 } else {
-                    // Si le type de retour n'est pas reconnu, renvoyer une erreur
-                    out.println("Type de retour non reconnu.");
+                    methodParams.add(null);
                 }
-            } catch (InstantiationException | IllegalAccessException | InvocationTargetException
-                    | NoSuchMethodException e) {
-                // En cas d'erreur lors de l'invocation du contrôleur, renvoyer une erreur 500
-                resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-                out.println("<h1>500 Internal Server Error</h1>");
-                out.println(
-                        "<p>Une erreur s'est produite lors de l'invocation du contrôleur : " + e.getMessage() + "</p>");
-                e.printStackTrace(out);
             }
+
+            // Appeler la méthode du contrôleur avec les paramètres récupérés
+            Object result = method.invoke(controllerInstance, methodParams.toArray());
+
+            // Gérer le type de retour de la méthode du contrôleur
+            if (result instanceof String) {
+                out.println(result);
+            } else if (result instanceof ModelView) {
+                ModelView modelView = (ModelView) result;
+                HashMap<String, Object> data = modelView.getData();
+                // Transférer les données vers la vue
+                for (String key : data.keySet()) {
+                    req.setAttribute(key, data.get(key));
+                }
+                // Faire une redirection vers la vue associée
+                RequestDispatcher dispatcher = req.getRequestDispatcher(modelView.getUrl());
+                dispatcher.forward(req, resp);
+            } else {
+                throw new Exception("Type de retour non reconnu");
+            }
+        } catch (InstantiationException | IllegalAccessException | InvocationTargetException
+                | NoSuchMethodException e) {
+            // En cas d'erreur lors de l'invocation du contrôleur, renvoyer une erreur 500
+            resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            out.println("<h1>500 Internal Server Error</h1>");
+            out.println(
+                    "<p>Une erreur s'est produite lors de l'invocation du contrôleur : " + e.getMessage() + "</p>");
+            e.printStackTrace(out);
         }
     }
 }
