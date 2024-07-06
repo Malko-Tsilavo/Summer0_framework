@@ -11,7 +11,7 @@ import mg.sprint.annotation.RequestObject;
 import mg.sprint.annotation.RequestSubParameter;
 import mg.sprint.reflection.Reflect;
 import mg.sprint.reflection.AnnotationProcessor;
-
+import mg.sprint.session.MySession;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
@@ -97,11 +97,16 @@ public class FrontController extends HttpServlet {
             resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
             out.println("<h1>Erreur 404</h1>");
             out.println("<p>L'URL " + url + " est introuvable sur ce serveur, veuillez essayer un autre.</p>");
+            return;
         }
 
         try {
             // Instancier le contrôleur
             Object controllerInstance = mapping.getController().getDeclaredConstructor().newInstance();
+
+            // Vérifier et gérer les sessions
+            AnnotationProcessor.sessionProcess(controllerInstance, req);
+
             // Préparer les paramètres de la méthode du contrôleur
             Method method = mapping.getMethod();
             List<Object> methodParams = new ArrayList<>();
@@ -117,20 +122,12 @@ public class FrontController extends HttpServlet {
                     Class<?> parameterType = parameter.getType();
                     Object parameterObject = parameterType.getDeclaredConstructor().newInstance();
 
-                    // Pour chaque champ de l'objet, gérer les annotations @RequestSubParameter
-                    for (Field field : parameterType.getDeclaredFields()) {
-                        if (field.isAnnotationPresent(RequestSubParameter.class)) {
-                            String paramName = field.getAnnotation(RequestSubParameter.class).value();
-                            String paramValue = req.getParameter(paramName);
-                            if (paramValue != null) {
-                                field.setAccessible(true);
-                                Object convertedValue = AnnotationProcessor.convertValue(field.getType(), paramValue);
-                                field.set(parameterObject, convertedValue);
-                            }
-                        }
-                    }
+                    // Exécuter le traitement des annotations
+                    AnnotationProcessor.execute(parameterObject, req);
 
                     methodParams.add(parameterObject);
+                } else if (parameter.getType().equals(MySession.class)) {
+                    methodParams.add(new MySession(req.getSession()));
                 } else {
                     methodParams.add(null);
                 }
@@ -163,6 +160,11 @@ public class FrontController extends HttpServlet {
             out.println(
                     "<p>Une erreur s'est produite lors de l'invocation du contrôleur : " + e.getMessage() + "</p>");
             e.printStackTrace(out);
+        } catch (Exception e) {
+            // Afficher le message de l'exception personnalisée
+            resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            out.println("<h1>400 Bad Request</h1>");
+            out.println("<p>" + e.getMessage() + "</p>");
         }
     }
 }
