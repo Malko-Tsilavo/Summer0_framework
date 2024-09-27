@@ -9,6 +9,7 @@ import mg.sprint.annotation.Controller;
 import mg.sprint.annotation.GetMapping;
 import mg.sprint.annotation.RequestObject;
 import mg.sprint.annotation.RequestSubParameter;
+import mg.sprint.annotation.Restapi;
 import mg.sprint.reflection.Reflect;
 import mg.sprint.reflection.AnnotationProcessor;
 import mg.sprint.session.MySession;
@@ -136,32 +137,46 @@ public class FrontController extends HttpServlet {
             // Appeler la méthode du contrôleur avec les paramètres récupérés
             Object result = method.invoke(controllerInstance, methodParams.toArray());
 
-            // Gérer le type de retour de la méthode du contrôleur
-            if (result instanceof String) {
-                out.println(result);
-            } else if (result instanceof ModelView) {
-                ModelView modelView = (ModelView) result;
-                HashMap<String, Object> data = modelView.getData();
-                // Transférer les données vers la vue
-                for (String key : data.keySet()) {
-                    req.setAttribute(key, data.get(key));
+            if (method.isAnnotationPresent(Restapi.class)) {
+                Gson gson = new Gson();
+                String jsonResponse;
+
+                if (result instanceof ModelView) {
+                    ModelView modelView = (ModelView) result;
+                    jsonResponse = gson.toJson(modelView.getData());
+                } else {
+                    jsonResponse = gson.toJson(result);
                 }
-                // Faire une redirection vers la vue associée
-                RequestDispatcher dispatcher = req.getRequestDispatcher(modelView.getUrl());
-                dispatcher.forward(req, resp);
+
+                resp.setContentType("application/json");
+                resp.setCharacterEncoding("UTF-8");
+                resp.getWriter().write(jsonResponse);
+
             } else {
-                throw new Exception("Type de retour non reconnu");
+                // Traitement habituel pour les résultats non-REST
+                if (result instanceof String) {
+                    out.println(result);
+                } else if (result instanceof ModelView) {
+                    ModelView modelView = (ModelView) result;
+                    HashMap<String, Object> data = modelView.getData();
+                    // Transférer les données vers la vue
+                    for (String key : data.keySet()) {
+                        req.setAttribute(key, data.get(key));
+                    }
+                    // Faire une redirection vers la vue associée
+                    RequestDispatcher dispatcher = req.getRequestDispatcher(modelView.getUrl());
+                    dispatcher.forward(req, resp);
+                } else {
+                    throw new Exception("Type de retour non reconnu");
+                }
             }
-        } catch (InstantiationException | IllegalAccessException | InvocationTargetException
-                | NoSuchMethodException e) {
-            // En cas d'erreur lors de l'invocation du contrôleur, renvoyer une erreur 500
+
+        } catch (InstantiationException | IllegalAccessException | InvocationTargetException | NoSuchMethodException e) {
             resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
             out.println("<h1>500 Internal Server Error</h1>");
-            out.println(
-                    "<p>Une erreur s'est produite lors de l'invocation du contrôleur : " + e.getMessage() + "</p>");
+            out.println("<p>Une erreur s'est produite lors de l'invocation du contrôleur : " + e.getMessage() + "</p>");
             e.printStackTrace(out);
         } catch (Exception e) {
-            // Afficher le message de l'exception personnalisée
             resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
             out.println("<h1>400 Bad Request</h1>");
             out.println("<p>" + e.getMessage() + "</p>");
