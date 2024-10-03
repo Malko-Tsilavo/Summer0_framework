@@ -1,18 +1,24 @@
 package mg.sprint.controller;
 
+import com.google.gson.Gson;
+
 import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+
 import mg.sprint.annotation.Controller;
-import mg.sprint.annotation.GetMapping;
+import mg.sprint.annotation.Get;
+import mg.sprint.annotation.Post;
 import mg.sprint.annotation.RequestObject;
 import mg.sprint.annotation.RequestSubParameter;
 import mg.sprint.annotation.Restapi;
+import mg.sprint.annotation.Url;
 import mg.sprint.reflection.Reflect;
 import mg.sprint.reflection.AnnotationProcessor;
 import mg.sprint.session.MySession;
+
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
@@ -36,26 +42,44 @@ public class FrontController extends HttpServlet {
             if (controllers.isEmpty()) {
                 throw new IllegalStateException("Le package " + controllersPackage + " est vide ou n'existe pas.");
             }
-
-            // Pour chaque classe de contrôleur, récupérer les méthodes annotées avec
-            // @GetMapping
+            // Pour chaque classe de contrôleur, récupérer les méthodes annotées avec @Url
             for (Class<?> controller : controllers) {
                 for (Method method : controller.getDeclaredMethods()) {
-                    if (method.isAnnotationPresent(GetMapping.class)) {
-                        GetMapping getMapping = method.getAnnotation(GetMapping.class);
-                        String url = getMapping.value();
+                    if (method.isAnnotationPresent(Url.class)) {
+                        // Récupérer l'annotation @Url
+                        Url urlAnnotation = method.getAnnotation(Url.class);
+                        String url = urlAnnotation.value();
 
-                        // Vérifier que l'URL n'est pas associee avec plusieurs controller
-                        if (urlMappings.containsKey(url)) {
-                            throw new IllegalStateException(
-                                    "L'URL " + url + " est utiliser par plusieurs controllers.");
+                        // Vérifier si la méthode est annotée avec @Post ou @Get
+                        boolean hasPost = method.isAnnotationPresent(Post.class);
+                        boolean hasGet = method.isAnnotationPresent(Get.class);
+
+                        // Déterminer le verbe (GET par défaut si ni @Post ni @Get ne sont présents)
+                        String verb;
+                        if (hasPost && hasGet) {
+                            throw new IllegalStateException("La méthode " + method.getName() + " ne peut pas avoir à la fois @Post et @Get.");
+                        } else if (hasPost) {
+                            verb = "POST";
+                        } else {
+                            verb = "GET";
                         }
 
-                        // Ajouter l'URL et la méthode à la liste des mappings
-                        urlMappings.put(url, new Mapping(controller, method));
+                        // Vérifier si l'URL est déjà associée à un verbe différent dans urlMappings
+                        if (urlMappings.containsKey(url)) {
+                            Mapping existingMapping = urlMappings.get(url);
+                            String existingVerb = existingMapping.getVerb();
+                            if (!existingVerb.equals(verb)) {
+                                throw new IllegalStateException(
+                                    "L'URL " + url + " est déjà associée au verbe " + existingVerb);
+                            }
+                        }
+
+                        // Ajouter l'URL, le contrôleur, la méthode et le verbe au mapping
+                        urlMappings.put(url, new Mapping(controller, method, verb));
                     }
                 }
             }
+
         } catch (Exception e) {
             e.printStackTrace();
             throw new RuntimeException(e.getMessage());
@@ -85,24 +109,32 @@ public class FrontController extends HttpServlet {
     }
 
     protected void processRequest(HttpServletRequest req, HttpServletResponse resp)
-            throws IOException, ServletException, Exception {
+    throws IOException, ServletException, Exception {
         PrintWriter out = resp.getWriter();
         String requestURI = req.getRequestURI();
         String contextPath = req.getContextPath();
         String url = requestURI.substring(contextPath.length());
         Mapping mapping = urlMappings.get(url);
-
         // Si le mapping pour l'URL n'existe pas, retourner une erreur 404
         if (mapping == null) {
-            // Si l'URL est inexistant
             resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
             out.println("<h1>Erreur 404</h1>");
             out.println("<p>L'URL " + url + " est introuvable sur ce serveur, veuillez essayer un autre.</p>");
             return;
         }
+        // Vérifier que le verbe de la requête correspond au verbe attendu
+        String requestVerb = req.getMethod(); // "GET" ou "POST"
+        String expectedVerb = mapping.getVerb();
+
+        if (!requestVerb.equalsIgnoreCase(expectedVerb)) {
+            // Si le verbe ne correspond pas, retourner une erreur 
+            resp.setStatus(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
+            out.println("<p>La méthode " + requestVerb + " n'est pas autorisée pour l'URL " + url + ".</p>");
+            return;
+        }
 
         try {
-            // Instancier le contrôleur
+            // Le reste du traitement continue si le verbe est correct
             Object controllerInstance = mapping.getController().getDeclaredConstructor().newInstance();
 
             // Vérifier et gérer les sessions
@@ -112,74 +144,30 @@ public class FrontController extends HttpServlet {
             Method method = mapping.getMethod();
             List<Object> methodParams = new ArrayList<>();
 
-            // Gérer les paramètres de la méthode
-            for (Parameter parameter : method.getParameters()) {
-                if (parameter.getType().equals(HttpServletRequest.class)) {
-                    methodParams.add(req);
-                } else if (parameter.getType().equals(HttpServletResponse.class)) {
-                    methodParams.add(resp);
-                } else if (parameter.isAnnotationPresent(RequestObject.class)) {
-                    // Gérer les objets annotés avec @RequestObject
-                    Class<?> parameterType = parameter.getType();
-                    Object parameterObject = parameterType.getDeclaredConstructor().newInstance();
+            //Gestion des paramètre
+            AnnotationProcessor.ParameterProcess(method, methodParams, req, resp);
 
-                    // Exécuter le traitement des annotations
-                    AnnotationProcessor.execute(parameterObject, req);
-
-                    methodParams.add(parameterObject);
-                } else if (parameter.getType().equals(MySession.class)) {
-                    methodParams.add(new MySession(req.getSession()));
-                } else {
-                    methodParams.add(null);
-                }
-            }
-
-            // Appeler la méthode du contrôleur avec les paramètres récupérés
             Object result = method.invoke(controllerInstance, methodParams.toArray());
 
+            // Vérifier si la méthode est annotée avec @Restapi
             if (method.isAnnotationPresent(Restapi.class)) {
-                Gson gson = new Gson();
-                String jsonResponse;
-
-                if (result instanceof ModelView) {
-                    ModelView modelView = (ModelView) result;
-                    jsonResponse = gson.toJson(modelView.getData());
-                } else {
-                    jsonResponse = gson.toJson(result);
-                }
-
-                resp.setContentType("application/json");
-                resp.setCharacterEncoding("UTF-8");
-                resp.getWriter().write(jsonResponse);
-
+                AnnotationProcessor.RestapiProcess(result, req, resp);
             } else {
-                // Traitement habituel pour les résultats non-REST
-                if (result instanceof String) {
-                    out.println(result);
-                } else if (result instanceof ModelView) {
-                    ModelView modelView = (ModelView) result;
-                    HashMap<String, Object> data = modelView.getData();
-                    // Transférer les données vers la vue
-                    for (String key : data.keySet()) {
-                        req.setAttribute(key, data.get(key));
-                    }
-                    // Faire une redirection vers la vue associée
-                    RequestDispatcher dispatcher = req.getRequestDispatcher(modelView.getUrl());
-                    dispatcher.forward(req, resp);
-                } else {
-                    throw new Exception("Type de retour non reconnu");
-                }
+                AnnotationProcessor.UsualProcess(result, req, resp);
             }
 
         } catch (InstantiationException | IllegalAccessException | InvocationTargetException | NoSuchMethodException e) {
+            // En cas d'erreur lors de l'invocation du contrôleur, renvoyer une erreur 500
             resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
             out.println("<h1>500 Internal Server Error</h1>");
             out.println("<p>Une erreur s'est produite lors de l'invocation du contrôleur : " + e.getMessage() + "</p>");
             e.printStackTrace(out);
         } catch (Exception e) {
+            // Afficher le message de l'exception personnalisée
             resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
             out.println("<h1>400 Bad Request</h1>");
             out.println("<p>" + e.getMessage() + "</p>");
         }
     }
+
 }

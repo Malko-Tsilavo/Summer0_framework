@@ -1,16 +1,33 @@
 package mg.sprint.reflection;
 
+import com.google.gson.Gson;
+
+import jakarta.servlet.RequestDispatcher;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
+
+import mg.sprint.annotation.Controller;
 import mg.sprint.annotation.RequestObject;
 import mg.sprint.annotation.RequestSubParameter;
+import mg.sprint.annotation.Restapi;
+import mg.sprint.reflection.Reflect;
+import mg.sprint.reflection.AnnotationProcessor;
 import mg.sprint.session.MySession;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpSession;
-import java.lang.reflect.Field;
+import mg.sprint.controller.ModelView;
+
+import java.io.IOException;
+import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
-import java.util.Arrays;
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Arrays;
 
 // Classe pour traiter les annotations
 public class AnnotationProcessor {
@@ -102,6 +119,67 @@ public class AnnotationProcessor {
                         e.printStackTrace();
                     }
                 }
+            }
+        }
+    }
+
+    public static void RestapiProcess(Object result,HttpServletRequest req, HttpServletResponse resp) throws Exception{
+    // Gestion des réponses REST avec JSON
+        Gson gson = new Gson();
+        String jsonResponse;
+
+        if (result instanceof ModelView) {
+            ModelView modelView = (ModelView) result;
+            jsonResponse = gson.toJson(modelView.getData());
+        } else {
+            jsonResponse = gson.toJson(result);
+        }
+
+        // Configurer et envoyer la réponse JSON
+        resp.setContentType("application/json");
+        resp.setCharacterEncoding("UTF-8");
+        resp.getWriter().write(jsonResponse);
+
+    }
+
+    public static void UsualProcess(Object result,HttpServletRequest req, HttpServletResponse resp) throws Exception{
+        PrintWriter out = resp.getWriter();
+        if (result instanceof String) {
+            out.println(result);
+        } else if (result instanceof ModelView) {
+            ModelView modelView = (ModelView) result;
+            HashMap<String, Object> data = modelView.getData();
+            // Transférer les données vers la vue
+            for (String key : data.keySet()) {
+                req.setAttribute(key, data.get(key));
+            }
+            // Faire une redirection vers la vue associée
+            RequestDispatcher dispatcher = req.getRequestDispatcher(modelView.getUrl());
+            dispatcher.forward(req, resp);
+        } else {
+            throw new Exception("Type de retour non reconnu");
+        }
+    }
+
+    public static void ParameterProcess(Method method,List<Object> methodParams,HttpServletRequest req, HttpServletResponse resp) throws Exception{
+        for (Parameter parameter : method.getParameters()) {
+            if (parameter.getType().equals(HttpServletRequest.class)) {
+                methodParams.add(req);
+            } else if (parameter.getType().equals(HttpServletResponse.class)) {
+                methodParams.add(resp);
+            } else if (parameter.isAnnotationPresent(RequestObject.class)) {
+                // Gérer les objets annotés avec @RequestObject
+                Class<?> parameterType = parameter.getType();
+                Object parameterObject = parameterType.getDeclaredConstructor().newInstance();
+
+                // Exécuter le traitement des annotations
+                AnnotationProcessor.execute(parameterObject, req);
+
+                methodParams.add(parameterObject);
+            } else if (parameter.getType().equals(MySession.class)) {
+                methodParams.add(new MySession(req.getSession()));
+            } else {
+                methodParams.add(null);
             }
         }
     }
