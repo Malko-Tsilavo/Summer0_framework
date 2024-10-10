@@ -42,6 +42,10 @@ public class FrontController extends HttpServlet {
             if (controllers.isEmpty()) {
                 throw new IllegalStateException("Le package " + controllersPackage + " est vide ou n'existe pas.");
             }
+            // Créer deux listes temporaires pour stocker les URL et leurs actions associées
+            ArrayList<String> listeUrl = new ArrayList<>();
+            ArrayList<VerbAction> listeVerbAction = new ArrayList<>();
+            
             // Pour chaque classe de contrôleur, récupérer les méthodes annotées avec @Url
             for (Class<?> controller : controllers) {
                 for (Method method : controller.getDeclaredMethods()) {
@@ -63,22 +67,27 @@ public class FrontController extends HttpServlet {
                         } else {
                             verb = "GET";
                         }
+                        // Créer une nouvelle action pour cette méthode
+                        VerbAction newVerbAction = new VerbAction();
+                        newVerbAction.setMethod(method);
+                        newVerbAction.setVerb(verb);
 
-                        // Vérifier si l'URL est déjà associée à un verbe différent dans urlMappings
-                        if (urlMappings.containsKey(url)) {
-                            Mapping existingMapping = urlMappings.get(url);
-                            String existingVerb = existingMapping.getVerb();
-                            if (!existingVerb.equals(verb)) {
-                                throw new IllegalStateException(
-                                    "L'URL " + url + " est déjà associée au verbe " + existingVerb);
-                            }
+                        // Ajouter l'URL et l'action aux listes temporaires
+                        listeUrl.add(url);
+                        listeVerbAction.add(newVerbAction);
+
+                        // Ajouter le mapping si l'URL n'existe pas encore
+                        if (!urlMappings.containsKey(url)) {
+                            ArrayList<VerbAction> verbActions = new ArrayList<>();
+                            verbActions.add(newVerbAction);
+                            Mapping newMapping = new Mapping(controller, verbActions);
+                            urlMappings.put(url, newMapping);
                         }
-
-                        // Ajouter l'URL, le contrôleur, la méthode et le verbe au mapping
-                        urlMappings.put(url, new Mapping(controller, method, verb));
                     }
                 }
             }
+            // Appel de la fonction pour vérifier et traiter les doublons d'URL et de verbes
+            AnnotationProcessor.VerbActionProcess(listeUrl, listeVerbAction);
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -122,31 +131,41 @@ public class FrontController extends HttpServlet {
             out.println("<p>L'URL " + url + " est introuvable sur ce serveur, veuillez essayer un autre.</p>");
             return;
         }
-        // Vérifier que le verbe de la requête correspond au verbe attendu
-        String requestVerb = req.getMethod(); // "GET" ou "POST"
-        String expectedVerb = mapping.getVerb();
 
-        if (!requestVerb.equalsIgnoreCase(expectedVerb)) {
-            // Si le verbe ne correspond pas, retourner une erreur 
+        // Récupérer le verbe HTTP de la requête (GET ou POST)
+        String requestVerb = req.getMethod(); 
+        
+        // Trouver l'action correspondant au verbe HTTP dans la liste des actions
+        VerbAction matchedAction = null;
+        for (VerbAction action : mapping.getVerbActions()) {
+            if (action.getVerb().equalsIgnoreCase(requestVerb)) {
+                matchedAction = action;
+                break;
+            }
+        }
+
+        // Si aucune méthode correspondant au verbe n'est trouvée, retourner une erreur 405
+        if (matchedAction == null) {
             resp.setStatus(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
             out.println("<p>La méthode " + requestVerb + " n'est pas autorisée pour l'URL " + url + ".</p>");
             return;
         }
 
         try {
-            // Le reste du traitement continue si le verbe est correct
+            // Instancier le contrôleur
             Object controllerInstance = mapping.getController().getDeclaredConstructor().newInstance();
 
             // Vérifier et gérer les sessions
             AnnotationProcessor.sessionProcess(controllerInstance, req);
 
-            // Préparer les paramètres de la méthode du contrôleur
-            Method method = mapping.getMethod();
+            // Récupérer la méthode à partir de l'action correspondant au verbe
+            Method method = matchedAction.getMethod();
             List<Object> methodParams = new ArrayList<>();
 
-            //Gestion des paramètre
+            // Gestion des paramètres
             AnnotationProcessor.ParameterProcess(method, methodParams, req, resp);
 
+            // Appeler la méthode du contrôleur
             Object result = method.invoke(controllerInstance, methodParams.toArray());
 
             // Vérifier si la méthode est annotée avec @Restapi
