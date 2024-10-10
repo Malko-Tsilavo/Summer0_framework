@@ -1,27 +1,30 @@
 package mg.sprint.controller;
 
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 
 public class Mapping {
-    private final Class<?> controller;
-    private final Method method;
-    private final String verb;
-
-    public Mapping(Class<?> controller, Method method, String verb) {
-        this.controller = controller;
-        this.method = method;
-        this.verb = verb; 
+    private Class<?> controller;
+    private ArrayList<VerbAction> verbActions;
+    public ArrayList<VerbAction> getVerbActions() {
+        return verbActions;
     }
+
+    public void setVerbActions(ArrayList<VerbAction> verbActions) {
+        this.verbActions = verbActions;
+    }
+
 
     public Class<?> getController() {
         return controller;
     }
-
-    public Method getMethod() {
-        return method;
+    public void setController(Class<?> controller) {
+        this.controller = controller;
     }
 
-    public String getVerb() {
-        return verb; 
+    public Mapping(Class<?> controller, ArrayList<VerbAction> verbActions) {
+        this.controller = controller;
+        this.verbActions = verbActions;
     }
+
 }

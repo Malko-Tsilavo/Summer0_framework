@@ -17,6 +17,7 @@ import mg.sprint.reflection.Reflect;
 import mg.sprint.reflection.AnnotationProcessor;
 import mg.sprint.session.MySession;
 import mg.sprint.controller.ModelView;
+import mg.sprint.controller.VerbAction;
 
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -180,6 +181,21 @@ public class AnnotationProcessor {
                 methodParams.add(new MySession(req.getSession()));
             } else {
                 methodParams.add(null);
+            }
+        }
+    }
+
+    // Gestion des url pour eviter qu'ils ont le même verb
+    public static void VerbActionProcess(ArrayList<String> listeUrl,ArrayList<VerbAction> listeVerbAction){
+        for (int i = 0; i < listeUrl.size(); i++) {
+            for (int j = i + 1; j < listeUrl.size(); j++) {
+                if (listeUrl.get(i).equals(listeUrl.get(j))) {
+                    // Vérifier si les actions associées ont le même verbe
+                    if (listeVerbAction.get(i).getVerb().equals(listeVerbAction.get(j).getVerb())) {
+                        throw new IllegalStateException(
+                            "L'URL " + listeUrl.get(i) + " est déjà associée au verbe " + listeVerbAction.get(i).getVerb() + ".");
+                    }
+                }
             }
         }
     }
