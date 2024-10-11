@@ -36,6 +36,7 @@ public class AnnotationProcessor {
     // Méthode pour traiter les paramètres d'un objet annoté avec @RequestObject
     public static void processRequestObject(Object obj, HttpServletRequest request) throws Exception {
         Class<?> clazz = obj.getClass();
+        
 
         // Parcourir les champs de la classe
         for (Field field : clazz.getDeclaredFields()) {
@@ -186,17 +187,50 @@ public class AnnotationProcessor {
     }
 
     // Gestion des url pour eviter qu'ils ont le même verb
-    public static void VerbActionProcess(ArrayList<String> listeUrl,ArrayList<VerbAction> listeVerbAction){
+    public static void VerbActionProcess(ArrayList<String> listeUrl,ArrayList<VerbAction> listeVerbAction,List<String> list){
         for (int i = 0; i < listeUrl.size(); i++) {
             for (int j = i + 1; j < listeUrl.size(); j++) {
                 if (listeUrl.get(i).equals(listeUrl.get(j))) {
                     // Vérifier si les actions associées ont le même verbe
                     if (listeVerbAction.get(i).getVerb().equals(listeVerbAction.get(j).getVerb())) {
-                        throw new IllegalStateException(
-                            "L'URL " + listeUrl.get(i) + " est déjà associée au verbe " + listeVerbAction.get(i).getVerb() + ".");
+                        list.add("L'URL " + listeUrl.get(i) + " est déjà associée au verbe " + listeVerbAction.get(i).getVerb());    
                     }
                 }
             }
+        }
+    }
+
+    // Gestion des erreurs présent
+    public static void init_error(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        if (ErrorTracker.hasErrors()) {
+            List<ErrorDetails> errors = ErrorTracker.getErrors();
+    
+            ErrorDetails firstError = errors.get(0);
+    
+            resp.setStatus(firstError.getStatusCode());
+    
+            resp.setContentType("text/html");
+    
+            PrintWriter writer = resp.getWriter();
+            writer.write("<html>");
+            writer.write("<head>");
+            writer.write("<title>Erreur " + firstError.getStatusCode() + "</title>"); 
+            writer.write("</head>");
+            writer.write("<body>");
+            writer.write("<h1>Erreur " + firstError.getStatusCode() + "</h1>"); 
+    
+            for (ErrorDetails errorDetails : errors) {
+                writer.write("<p>" + errorDetails.getMessage() + "</p>"); 
+            }
+    
+            writer.write("</body>");
+            writer.write("</html>");
+    
+            // Nettoyer le writer après écriture
+            writer.flush();
+    
+            ErrorTracker.clearErrors();
+            return;
         }
     }
 }
