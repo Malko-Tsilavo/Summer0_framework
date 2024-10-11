@@ -17,6 +17,7 @@ import mg.sprint.annotation.Restapi;
 import mg.sprint.annotation.Url;
 import mg.sprint.reflection.Reflect;
 import mg.sprint.reflection.AnnotationProcessor;
+import mg.sprint.reflection.ErrorTracker;
 import mg.sprint.session.MySession;
 
 import java.io.IOException;
@@ -31,6 +32,7 @@ import java.util.List;
 
 public class FrontController extends HttpServlet {
     private final HashMap<String, Mapping> urlMappings = new HashMap<>();
+    private List<String> listeErreur;
 
     @Override
     public void init() throws ServletException {
@@ -87,11 +89,10 @@ public class FrontController extends HttpServlet {
                 }
             }
             // Appel de la fonction pour vérifier et traiter les doublons d'URL et de verbes
-            AnnotationProcessor.VerbActionProcess(listeUrl, listeVerbAction);
+            AnnotationProcessor.VerbActionProcess(listeUrl, listeVerbAction,listeErreur);
 
         } catch (Exception e) {
-            e.printStackTrace();
-            throw new RuntimeException(e.getMessage());
+            listeErreur.add("Erreur interne lors de l'initialisation: " + e.getMessage()); // Ajout de l'erreur dans la liste
         }
     }
 
@@ -125,10 +126,18 @@ public class FrontController extends HttpServlet {
         String url = requestURI.substring(contextPath.length());
         Mapping mapping = urlMappings.get(url);
         // Si le mapping pour l'URL n'existe pas, retourner une erreur 404
+       if (listeErreur != null && !listeErreur.isEmpty()) {
+            for (String erreur : listeErreur) {
+                ErrorTracker.addError(500, erreur);
+                AnnotationProcessor.init_error(req, resp); // Gérer les erreurs
+                return;
+            }
+        }
+        
+        // Si le mapping pour l'URL n'existe pas, retourner une erreur 404
         if (mapping == null) {
-            resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
-            out.println("<h1>Erreur 404</h1>");
-            out.println("<p>L'URL " + url + " est introuvable sur ce serveur, veuillez essayer un autre.</p>");
+            ErrorTracker.addError(404, "L'URL " + url + " est introuvable sur ce serveur.");
+            AnnotationProcessor.init_error(req, resp); // Gérer les erreurs
             return;
         }
 
@@ -146,8 +155,8 @@ public class FrontController extends HttpServlet {
 
         // Si aucune méthode correspondant au verbe n'est trouvée, retourner une erreur 405
         if (matchedAction == null) {
-            resp.setStatus(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
-            out.println("<p>La méthode " + requestVerb + " n'est pas autorisée pour l'URL " + url + ".</p>");
+            ErrorTracker.addError(405, "La méthode " + requestVerb + " n'est pas autorisée pour l'URL " + url + ".");
+            AnnotationProcessor.init_error(req, resp); // Gérer les erreurs
             return;
         }
 
@@ -175,17 +184,11 @@ public class FrontController extends HttpServlet {
                 AnnotationProcessor.UsualProcess(result, req, resp);
             }
 
-        } catch (InstantiationException | IllegalAccessException | InvocationTargetException | NoSuchMethodException e) {
-            // En cas d'erreur lors de l'invocation du contrôleur, renvoyer une erreur 500
-            resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-            out.println("<h1>500 Internal Server Error</h1>");
-            out.println("<p>Une erreur s'est produite lors de l'invocation du contrôleur : " + e.getMessage() + "</p>");
+        }  catch (Exception e) {
+            // Gestion de toutes les erreurs non capturées
+            ErrorTracker.addError(500, "Erreur lors de l'invocation du contrôleur : " + e.getMessage());
+            AnnotationProcessor.init_error(req, resp); 
             e.printStackTrace(out);
-        } catch (Exception e) {
-            // Afficher le message de l'exception personnalisée
-            resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-            out.println("<h1>400 Bad Request</h1>");
-            out.println("<p>" + e.getMessage() + "</p>");
         }
     }
 
