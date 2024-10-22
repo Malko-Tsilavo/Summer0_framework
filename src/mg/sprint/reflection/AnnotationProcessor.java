@@ -8,18 +8,18 @@ import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
-
+import jakarta.servlet.http.Part;
 import mg.sprint.annotation.Controller;
 import mg.sprint.annotation.RequestObject;
 import mg.sprint.annotation.RequestSubParameter;
-import mg.sprint.annotation.Restapi;
-import mg.sprint.reflection.Reflect;
 import mg.sprint.reflection.AnnotationProcessor;
 import mg.sprint.session.MySession;
 import mg.sprint.controller.ModelView;
 import mg.sprint.controller.VerbAction;
+import mg.sprint.controller.FileManager;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Arrays;
+import java.util.Collection;
 
 // Classe pour traiter les annotations
 public class AnnotationProcessor {
@@ -63,6 +64,24 @@ public class AnnotationProcessor {
                 // Si le champ n'est pas annoté, lancer une exception
                 throw new Exception("L'attribut " + field.getName() + " de la classe " + clazz.getName()
                         + " doit avoir l'annotation @RequestSubParameter.");
+            }
+        }
+    }
+
+    public static void processFileUpload(HttpServletRequest req, FileManager fileManager) throws Exception {
+        Collection<Part> parts = req.getParts(); 
+
+        for (Part part : parts) {
+            // Vérifier si la partie est un fichier (et non un champ de formulaire classique)
+            if (part.getSubmittedFileName() != null) {
+                String fileName = part.getSubmittedFileName();
+                fileManager.setFileName(fileName);
+
+                InputStream fileContent = part.getInputStream();
+                byte[] fileBytes = fileContent.readAllBytes();
+                fileManager.setFileContent(fileBytes);
+
+                fileContent.close();
             }
         }
     }
@@ -163,7 +182,7 @@ public class AnnotationProcessor {
         }
     }
 
-    public static void ParameterProcess(Method method,List<Object> methodParams,HttpServletRequest req, HttpServletResponse resp) throws Exception{
+    public static void ParameterProcess(Method method, List<Object> methodParams, HttpServletRequest req, HttpServletResponse resp) throws Exception {
         for (Parameter parameter : method.getParameters()) {
             if (parameter.getType().equals(HttpServletRequest.class)) {
                 methodParams.add(req);
@@ -172,19 +191,27 @@ public class AnnotationProcessor {
             } else if (parameter.isAnnotationPresent(RequestObject.class)) {
                 // Gérer les objets annotés avec @RequestObject
                 Class<?> parameterType = parameter.getType();
-                Object parameterObject = parameterType.getDeclaredConstructor().newInstance();
-
-                // Exécuter le traitement des annotations
-                AnnotationProcessor.execute(parameterObject, req);
-
-                methodParams.add(parameterObject);
+    
+                // Vérifier si l'objet est de type FileManager
+                if (parameterType.equals(FileManager.class)) {
+                    FileManager fileManager = new FileManager();
+                    // Traiter le fichier uploadé avec la méthode processFileUpload
+                    AnnotationProcessor.processFileUpload(req, fileManager);
+                    methodParams.add(fileManager); // Ajouter le fileManager traité aux paramètres de la méthode
+                } else {
+                    // Gérer les autres objets annotés avec @RequestObject
+                    Object parameterObject = parameterType.getDeclaredConstructor().newInstance();
+                    // Exécuter le traitement des annotations pour les autres types d'objets
+                    AnnotationProcessor.execute(parameterObject, req);
+                    methodParams.add(parameterObject);
+                }
             } else if (parameter.getType().equals(MySession.class)) {
                 methodParams.add(new MySession(req.getSession()));
             } else {
                 methodParams.add(null);
             }
         }
-    }
+    } 
 
     // Gestion des url pour eviter qu'ils ont le même verb
     public static void VerbActionProcess(ArrayList<String> listeUrl,ArrayList<VerbAction> listeVerbAction,List<String> list){

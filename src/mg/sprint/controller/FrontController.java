@@ -19,6 +19,8 @@ import mg.sprint.reflection.Reflect;
 import mg.sprint.reflection.AnnotationProcessor;
 import mg.sprint.reflection.ErrorTracker;
 import mg.sprint.session.MySession;
+import jakarta.servlet.annotation.MultipartConfig;
+
 
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -29,6 +31,12 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+
+@MultipartConfig(
+    fileSizeThreshold = 512000,  // 500 KB (taille limite avant stockage sur disque)
+    maxFileSize = 10485760L,     // 10 MB (taille maximale d'un fichier)
+    maxRequestSize = 20971520L   // 20 MB (taille maximale de la requête multipart)
+)
 
 public class FrontController extends HttpServlet {
     private final HashMap<String, Mapping> urlMappings = new HashMap<>();
