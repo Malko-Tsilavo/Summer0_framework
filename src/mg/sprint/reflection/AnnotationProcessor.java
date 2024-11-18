@@ -10,6 +10,10 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import jakarta.servlet.http.Part;
 import mg.sprint.annotation.Controller;
+import mg.sprint.annotation.Maximum;
+import mg.sprint.annotation.Minimum;
+import mg.sprint.annotation.Nullable;
+import mg.sprint.annotation.Numeric;
 import mg.sprint.annotation.RequestObject;
 import mg.sprint.annotation.RequestSubParameter;
 import mg.sprint.reflection.AnnotationProcessor;
@@ -24,6 +28,10 @@ import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.text.DateFormat;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -182,6 +190,57 @@ public class AnnotationProcessor {
         }
     }
 
+    public static void checkVerification(Object obj) throws Exception {
+        Class<?> clazz = obj.getClass();
+        
+        for (Field field : clazz.getDeclaredFields()) {
+            field.setAccessible(true); 
+            
+            for (Annotation annotation : field.getAnnotations()) {
+                Object value = field.get(obj);
+                
+                if (annotation instanceof Minimum) {
+                    Minimum minAnnotation = (Minimum) annotation;
+                    double minValue = minAnnotation.value();
+                    
+                    if (value instanceof Number && ((Number) value).doubleValue() < minValue) {
+                        throw new IllegalArgumentException(field.getName() + " est inférieur au minimum autorisé: " + minValue);
+                    }
+                }
+                
+                if (annotation instanceof Maximum) {
+                    Maximum maxAnnotation = (Maximum) annotation;
+                    double maxValue = maxAnnotation.value();
+                    
+                    if (value instanceof Number && ((Number) value).doubleValue() > maxValue) {
+                        throw new IllegalArgumentException(field.getName() + " dépasse le maximum autorisé: " + maxValue);
+                    }
+                }
+
+                if (annotation instanceof Nullable) {
+                    if (value == null) {
+                        throw new IllegalArgumentException(field.getName() + " ne peut pas être nul.");
+                    }
+                }
+
+                if (annotation instanceof Numeric) {
+                    if (value == null) {
+                        throw new IllegalArgumentException(
+                            "Le champ " + field.getName() + " annoté avec @Numeric ne peut pas être null."
+                        );
+                    }
+
+                    String valueAsString = value.toString(); // Convertit la valeur en chaîne
+                    if (!valueAsString.matches("\\d+")) { // Vérifie si elle est composée uniquement de chiffres
+                        throw new IllegalArgumentException(
+                            "Le champ " + field.getName() + " doit être composé uniquement de chiffres. Valeur actuelle : " + valueAsString
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     public static void ParameterProcess(Method method, List<Object> methodParams, HttpServletRequest req, HttpServletResponse resp) throws Exception {
         for (Parameter parameter : method.getParameters()) {
             if (parameter.getType().equals(HttpServletRequest.class)) {
@@ -203,6 +262,7 @@ public class AnnotationProcessor {
                     Object parameterObject = parameterType.getDeclaredConstructor().newInstance();
                     // Exécuter le traitement des annotations pour les autres types d'objets
                     AnnotationProcessor.execute(parameterObject, req);
+                    AnnotationProcessor.checkVerification(parameterObject);
                     methodParams.add(parameterObject);
                 }
             } else if (parameter.getType().equals(MySession.class)) {
