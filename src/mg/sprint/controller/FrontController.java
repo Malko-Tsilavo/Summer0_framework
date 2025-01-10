@@ -178,9 +178,10 @@ public class FrontController extends HttpServlet {
             // Récupérer la méthode à partir de l'action correspondant au verbe
             Method method = matchedAction.getMethod();
             List<Object> methodParams = new ArrayList<>();
+            HashMap<String,String> listError=new HashMap<>();
 
             // Gestion des paramètres
-            AnnotationProcessor.ParameterProcess(method, methodParams, req, resp);
+            AnnotationProcessor.ParameterProcess(method, listError,methodParams, req, resp);
 
             // Appeler la méthode du contrôleur
             Object result = method.invoke(controllerInstance, methodParams.toArray());
@@ -189,7 +190,7 @@ public class FrontController extends HttpServlet {
             if (method.isAnnotationPresent(Restapi.class)) {
                 AnnotationProcessor.RestapiProcess(result, req, resp);
             } else {
-                AnnotationProcessor.UsualProcess(result, req, resp);
+                AnnotationProcessor.UsualProcess(result,listError, req, resp);
             }
 
         }  catch (Exception e) {
