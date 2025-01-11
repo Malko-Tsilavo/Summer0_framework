@@ -9,6 +9,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import jakarta.servlet.http.Part;
+import jakarta.servlet.http.HttpServletRequestWrapper;
+
 import mg.sprint.annotation.Controller;
 import mg.sprint.annotation.Maximum;
 import mg.sprint.annotation.Minimum;
@@ -63,7 +65,6 @@ public class AnnotationProcessor {
                         // Affecter la valeur convertie au champ de l'objet
                         field.set(obj, convertedValue);
                     }
-                    // Révoquer l'accessibilité du champ
                     field.setAccessible(false);
                 } catch (IllegalAccessException e) {
                     e.printStackTrace();
@@ -140,7 +141,7 @@ public class AnnotationProcessor {
                             if (parameters[i].getType() == MySession.class) {
                                 args[i] = new MySession(httpSession);
                             } else {
-                                args[i] = null; // Vous devrez ici ajuster pour gérer d'autres types
+                                args[i] = null; 
                             }
                         }
                         method.invoke(controllerInstance, args);
@@ -171,77 +172,55 @@ public class AnnotationProcessor {
 
     }
 
-    public static void UsualProcess(Object result,HttpServletRequest req, HttpServletResponse resp) throws Exception{
+    public static void UsualProcess(Object result, HashMap<String, String> listError, HttpServletRequest req, HttpServletResponse resp) throws Exception {
         PrintWriter out = resp.getWriter();
         if (result instanceof String) {
-            out.println(result);
+            out.println(result);  
         } else if (result instanceof ModelView) {
             ModelView modelView = (ModelView) result;
+    
+            // Encapsuler la requête dans un wrapper pour changer la méthode en GET
+            HttpServletRequest wrappedRequest = new HttpServletRequestWrapper(req) {
+                @Override
+                public String getMethod() {
+                    return "GET"; 
+                }
+            };
+    
             HashMap<String, Object> data = modelView.getData();
             // Transférer les données vers la vue
             for (String key : data.keySet()) {
                 req.setAttribute(key, data.get(key));
             }
-            // Faire une redirection vers la vue associée
-            RequestDispatcher dispatcher = req.getRequestDispatcher(modelView.getUrl());
-            dispatcher.forward(req, resp);
+    
+            // Déterminer la destination
+            String destination = "";
+            if (listError.isEmpty()) {
+                // Si aucune erreur, on va à l'URL de destination spécifiée dans le ModelView
+                destination = modelView.getUrl();
+            } else {
+                // Si des erreurs existent, on redirige vers l'URL référente
+                String referer = req.getHeader("Referer");
+    
+                // Vérifier si le referer existe et est valide
+                if (referer != null && !referer.isEmpty()) {
+                    // Traiter le referer pour obtenir le chemin relatif
+                    String contextPath = req.getContextPath();
+                    if (referer.contains(contextPath)) {
+                        destination = referer.substring(referer.indexOf(contextPath) + contextPath.length());
+                    }
+                }
+            }
+    
+            // Utiliser le wrapper pour rediriger la requête
+            RequestDispatcher dispatcher = wrappedRequest.getRequestDispatcher(destination);
+            dispatcher.forward(wrappedRequest, resp);
         } else {
             throw new Exception("Type de retour non reconnu");
         }
     }
 
-    public static void checkVerification(Object obj) throws Exception {
-        Class<?> clazz = obj.getClass();
-        
-        for (Field field : clazz.getDeclaredFields()) {
-            field.setAccessible(true); 
-            
-            for (Annotation annotation : field.getAnnotations()) {
-                Object value = field.get(obj);
-                
-                if (annotation instanceof Minimum) {
-                    Minimum minAnnotation = (Minimum) annotation;
-                    double minValue = minAnnotation.value();
-                    
-                    if (value instanceof Number && ((Number) value).doubleValue() < minValue) {
-                        throw new IllegalArgumentException(field.getName() + " est inférieur au minimum autorisé: " + minValue);
-                    }
-                }
-                
-                if (annotation instanceof Maximum) {
-                    Maximum maxAnnotation = (Maximum) annotation;
-                    double maxValue = maxAnnotation.value();
-                    
-                    if (value instanceof Number && ((Number) value).doubleValue() > maxValue) {
-                        throw new IllegalArgumentException(field.getName() + " dépasse le maximum autorisé: " + maxValue);
-                    }
-                }
-
-                if (annotation instanceof Nullable) {
-                    if (value == null) {
-                        throw new IllegalArgumentException(field.getName() + " ne peut pas être nul.");
-                    }
-                }
-
-                if (annotation instanceof Numeric) {
-                    if (value == null) {
-                        throw new IllegalArgumentException(
-                            "Le champ " + field.getName() + " annoté avec @Numeric ne peut pas être null."
-                        );
-                    }
-
-                    String valueAsString = value.toString(); // Convertit la valeur en chaîne
-                    if (!valueAsString.matches("\\d+")) { // Vérifie si elle est composée uniquement de chiffres
-                        throw new IllegalArgumentException(
-                            "Le champ " + field.getName() + " doit être composé uniquement de chiffres. Valeur actuelle : " + valueAsString
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    public static void ParameterProcess(Method method, List<Object> methodParams, HttpServletRequest req, HttpServletResponse resp) throws Exception {
+    public static void ParameterProcess(Method method,HashMap<String,String> listError, List<Object> methodParams, HttpServletRequest req, HttpServletResponse resp) throws Exception {
         for (Parameter parameter : method.getParameters()) {
             if (parameter.getType().equals(HttpServletRequest.class)) {
                 methodParams.add(req);
@@ -262,8 +241,13 @@ public class AnnotationProcessor {
                     Object parameterObject = parameterType.getDeclaredConstructor().newInstance();
                     // Exécuter le traitement des annotations pour les autres types d'objets
                     AnnotationProcessor.execute(parameterObject, req);
-                    AnnotationProcessor.checkVerification(parameterObject);
+                    Validator.checkVerification(parameterObject,listError);
                     methodParams.add(parameterObject);
+                    //Envoie des erreurs
+                    if (!listError.isEmpty()) {
+                        req.setAttribute("errors",listError);
+                        req.setAttribute(parameterObject.getClass().getName(),parameterObject);
+                    }
                 }
             } else if (parameter.getType().equals(MySession.class)) {
                 methodParams.add(new MySession(req.getSession()));
