@@ -1,18 +1,14 @@
 package mg.sprint.controller;
 
-import com.google.gson.Gson;
-
-import jakarta.servlet.RequestDispatcher;
+import jakarta.servlet.ServletContext;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-
+import mg.sprint.annotation.Autorisation;
 import mg.sprint.annotation.Controller;
 import mg.sprint.annotation.Get;
 import mg.sprint.annotation.Post;
-import mg.sprint.annotation.RequestObject;
-import mg.sprint.annotation.RequestSubParameter;
 import mg.sprint.annotation.Restapi;
 import mg.sprint.annotation.Url;
 import mg.sprint.reflection.Reflect;
@@ -21,16 +17,15 @@ import mg.sprint.reflection.ErrorTracker;
 import mg.sprint.session.MySession;
 import jakarta.servlet.annotation.MultipartConfig;
 
-
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.lang.reflect.Parameter;
-import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @MultipartConfig(
     fileSizeThreshold = 512000,  // 500 KB (taille limite avant stockage sur disque)
@@ -55,7 +50,7 @@ public class FrontController extends HttpServlet {
             // Créer deux listes temporaires pour stocker les URL et leurs actions associées
             ArrayList<String> listeUrl = new ArrayList<>();
             ArrayList<VerbAction> listeVerbAction = new ArrayList<>();
-            
+
             // Pour chaque classe de contrôleur, récupérer les méthodes annotées avec @Url
             for (Class<?> controller : controllers) {
                 for (Method method : controller.getDeclaredMethods()) {
@@ -71,7 +66,8 @@ public class FrontController extends HttpServlet {
                         // Déterminer le verbe (GET par défaut si ni @Post ni @Get ne sont présents)
                         String verb;
                         if (hasPost && hasGet) {
-                            throw new IllegalStateException("La méthode " + method.getName() + " ne peut pas avoir à la fois @Post et @Get.");
+                            throw new IllegalStateException(
+                                    "La méthode " + method.getName() + " ne peut pas avoir à la fois @Post et @Get.");
                         } else if (hasPost) {
                             verb = "POST";
                         } else {
@@ -97,10 +93,11 @@ public class FrontController extends HttpServlet {
                 }
             }
             // Appel de la fonction pour vérifier et traiter les doublons d'URL et de verbes
-            AnnotationProcessor.VerbActionProcess(listeUrl, listeVerbAction,listeErreur);
+            AnnotationProcessor.VerbActionProcess(listeUrl, listeVerbAction, listeErreur);
 
         } catch (Exception e) {
-            listeErreur.add("Erreur interne lors de l'initialisation: " + e.getMessage()); // Ajout de l'erreur dans la liste
+            listeErreur.add("Erreur interne lors de l'initialisation: " +
+                    e.getMessage()); // Ajout de l'erreur dans la liste
         }
     }
 
@@ -127,21 +124,21 @@ public class FrontController extends HttpServlet {
     }
 
     protected void processRequest(HttpServletRequest req, HttpServletResponse resp)
-    throws IOException, ServletException, Exception {
+            throws IOException, ServletException, Exception {
         PrintWriter out = resp.getWriter();
         String requestURI = req.getRequestURI();
         String contextPath = req.getContextPath();
         String url = requestURI.substring(contextPath.length());
         Mapping mapping = urlMappings.get(url);
         // Si le mapping pour l'URL n'existe pas, retourner une erreur 404
-       if (listeErreur != null && !listeErreur.isEmpty()) {
+        if (listeErreur != null && !listeErreur.isEmpty()) {
             for (String erreur : listeErreur) {
                 ErrorTracker.addError(500, erreur);
                 AnnotationProcessor.init_error(req, resp); // Gérer les erreurs
                 return;
             }
         }
-        
+
         // Si le mapping pour l'URL n'existe pas, retourner une erreur 404
         if (mapping == null) {
             ErrorTracker.addError(404, "L'URL " + url + " est introuvable sur ce serveur.");
@@ -150,8 +147,8 @@ public class FrontController extends HttpServlet {
         }
 
         // Récupérer le verbe HTTP de la requête (GET ou POST)
-        String requestVerb = req.getMethod(); 
-        
+        String requestVerb = req.getMethod();
+
         // Trouver l'action correspondant au verbe HTTP dans la liste des actions
         VerbAction matchedAction = null;
         for (VerbAction action : mapping.getVerbActions()) {
@@ -161,7 +158,8 @@ public class FrontController extends HttpServlet {
             }
         }
 
-        // Si aucune méthode correspondant au verbe n'est trouvée, retourner une erreur 405
+        // Si aucune méthode correspondant au verbe n'est trouvée, retourner une erreur
+        // 405
         if (matchedAction == null) {
             ErrorTracker.addError(405, "La méthode " + requestVerb + " n'est pas autorisée pour l'URL " + url + ".");
             AnnotationProcessor.init_error(req, resp); // Gérer les erreurs
@@ -178,10 +176,45 @@ public class FrontController extends HttpServlet {
             // Récupérer la méthode à partir de l'action correspondant au verbe
             Method method = matchedAction.getMethod();
             List<Object> methodParams = new ArrayList<>();
-            HashMap<String,String> listError=new HashMap<>();
+            HashMap<String, String> listError = new HashMap<>();
 
             // Gestion des paramètres
-            AnnotationProcessor.ParameterProcess(method, listError,methodParams, req, resp);
+            AnnotationProcessor.ParameterProcess(method, listError, methodParams, req, resp);
+
+            // Récupérer l'annotation Autorisation si elle existe
+            if (method.isAnnotationPresent(Autorisation.class)) {
+                Autorisation autorisation = method.getAnnotation(Autorisation.class);
+                String[] requiredRoles = autorisation.value();
+                ServletContext servletContext = req.getServletContext(); // Définir servletContext ici
+                MySession session = new MySession(req.getSession());
+                String keyParam = servletContext.getInitParameter("userKey");
+
+                System.out.println("La clé d'envoie est " + keyParam);
+
+                // Utiliser cette clé pour récupérer les rôles stockés dans la session
+                String[] userRoles = (String[]) session.get(keyParam);
+                System.out.println("Roles de l'user sont " + userRoles[0]);
+
+                // Convertir les tableaux en ensembles pour faciliter la comparaison
+                Set<String> userRolesSet = new HashSet<>(Arrays.asList(userRoles));
+                Set<String> requiredRolesSet = new HashSet<>(Arrays.asList(requiredRoles));
+
+                // Vérifier si toutes les autorisations requises sont présentes dans les rôles
+                // de l'utilisateur
+                if (!userRolesSet.containsAll(requiredRolesSet)) {
+                    String message = "\n Permission user ";
+                    for (int i = 0; i < userRoles.length; i++) {
+                        message += userRoles[i] + " ";
+                    }
+                    message += "\n Tandis que demandée ";
+                    for (int i = 0; i < requiredRoles.length; i++) {
+                        message += requiredRoles[i];
+                    }
+                    ErrorTracker.addError(500, "Permission refusée: " + message);
+                    AnnotationProcessor.init_error(req, resp);
+                    return;
+                }
+            }
 
             // Appeler la méthode du contrôleur
             Object result = method.invoke(controllerInstance, methodParams.toArray());
@@ -190,13 +223,13 @@ public class FrontController extends HttpServlet {
             if (method.isAnnotationPresent(Restapi.class)) {
                 AnnotationProcessor.RestapiProcess(result, req, resp);
             } else {
-                AnnotationProcessor.UsualProcess(result,listError, req, resp);
+                AnnotationProcessor.UsualProcess(result, listError, req, resp);
             }
 
-        }  catch (Exception e) {
+        } catch (Exception e) {
             // Gestion de toutes les erreurs non capturées
             ErrorTracker.addError(500, "Erreur lors de l'invocation du contrôleur : " + e.getMessage());
-            AnnotationProcessor.init_error(req, resp); 
+            AnnotationProcessor.init_error(req, resp);
             e.printStackTrace(out);
         }
     }

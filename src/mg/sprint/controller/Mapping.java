@@ -1,6 +1,5 @@
 package mg.sprint.controller;
 
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 
 public class Mapping {
