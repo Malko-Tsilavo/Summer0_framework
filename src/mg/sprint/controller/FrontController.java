@@ -216,6 +216,41 @@ public class FrontController extends HttpServlet {
                 }
             }
 
+            Class<?> controllerClass = controllerInstance.getClass();
+                
+            if (controllerClass.isAnnotationPresent(Autorisation.class)) {
+                Autorisation autorisation2 = controllerClass.getAnnotation(Autorisation.class);
+                
+                String[] requiredRoles = autorisation2.value();
+                ServletContext servletContext = req.getServletContext(); // Définir servletContext ici
+                MySession session = new MySession(req.getSession());
+                String keyParam = servletContext.getInitParameter("userKey");
+
+
+                if (session.get(keyParam) != null) {
+                    String[] userRoles = (String[]) session.get(keyParam);
+
+                    // Convertir les tableaux en ensembles pour faciliter la comparaison
+                    Set<String> userRolesSet = new HashSet<>(Arrays.asList(userRoles));
+                    Set<String> requiredRolesSet = new HashSet<>(Arrays.asList(requiredRoles));
+
+                    // Vérifier si toutes les autorisations requises sont présentes dans les rôles
+                    // de l'utilisateur
+                    if (!userRolesSet.containsAll(requiredRolesSet)) {
+                        String message ="\n Permission user ";
+                        for (int i = 0; i < userRoles.length; i++) {
+                            message+=userRoles[i]+" ";
+                        }
+                        for (int i = 0; i < requiredRoles.length; i++) {
+                            message+=requiredRoles[i];
+                        }
+                        ErrorTracker.addError(500, "Permission refusée: "+message);
+                        AnnotationProcessor.init_error(req, resp);
+                        return;
+                    }    
+                }
+            }
+
             // Appeler la méthode du contrôleur
             Object result = method.invoke(controllerInstance, methodParams.toArray());
 
